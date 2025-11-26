@@ -1,0 +1,9 @@
+config.py
+__pycache__/
+.env
+ch_data/
+minio_data/
+prefect_data/
+prefect_db_data/
+clickhouse_data/
+venv/

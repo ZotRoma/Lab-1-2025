@@ -1,0 +1,89 @@
+version: '3.9'
+
+services:
+  # База данных ClickHouse
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: weather_clickhouse
+    restart: always
+    ports:
+      - "8123:8123"
+      - "9002:9000"
+    environment:
+      - CLICKHOUSE_DB=default
+      - CLICKHOUSE_USER=default
+      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
+      - CLICKHOUSE_PASSWORD=default
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+
+  # Объектное хранилище MinIO
+  minio:
+    image: minio/minio:latest
+    container_name: weather_minio
+    restart: always
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000" 
+      - "9001:9001" 
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - ./minio_data:/data
+
+  # PREFECT DATABASE (Хранит историю запусков) 
+  prefect-db:
+    image: postgres:15-alpine
+    container_name: prefect_postgres
+    restart: always
+    environment:
+      - POSTGRES_USER=prefect
+      - POSTGRES_PASSWORD=prefect
+      - POSTGRES_DB=prefect
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./prefect_db_data:/var/lib/postgresql/data
+
+  # PREFECT SERVER (UI и API)
+  prefect-server:
+    image: prefecthq/prefect:3-latest 
+    container_name: weather_prefect_server
+    restart: always
+    entrypoint: ["/opt/prefect/entrypoint.sh", "prefect", "server", "start"]
+    volumes:
+      - ./prefect_data:/root/.prefect
+    environment:
+      # Настройка подключения сервера к базе данных
+      - PREFECT_API_DATABASE_CONNECTION_URL=postgresql+asyncpg://prefect:prefect@prefect-db:5432/prefect
+      # Адрес, по которому сервер слушает (0.0.0.0 позволяет доступ снаружи контейнера)
+      - PREFECT_SERVER_API_HOST=0.0.0.0
+    ports:
+      - "4200:4200" # UI Port
+    depends_on:
+      - prefect-db
+
+  # ETL СКРИПТ
+  etl-worker:
+    build: .
+    container_name: weather_etl_worker
+    restart: always
+    environment:
+      # Эта переменная попадет в python скрипт
+      - DOCKER_HOST_INTERNAL=host.docker.internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - prefect-server
+      - clickhouse
+      - minio
+
+volumes:
+  clickhouse_data:
+  prefect_db_data:
+  prefect_data:
